@@ -3,20 +3,14 @@ import db from '../../utils/db.js';
 const getAllCategory = async (params = {}) => {
     const result = {
         status: true,
-        category: {},
-        product: {}
+        category: {}
     };
 
     try {
         const categories = {};
-        const product = {};
 
-        const limit = 20;
-        const page = params.page || 1;
-        const offset = (page - 1) * limit;
-
-        let categoryQuery = `SELECT * FROM dm WHERE 1=1`;
-        let totalQuery = `SELECT COUNT(*) FROM dm WHERE 1=1`;
+        let categoryQuery = `SELECT * FROM dm WHERE 1=1 AND id != 0`;
+        let totalQuery = `SELECT COUNT(*) FROM dm WHERE 1=1 AND id != 0`;
 
         const queryValues = [];
         let i = 1;
@@ -39,11 +33,7 @@ const getAllCategory = async (params = {}) => {
 
         // Truy vấn tổng
         const totalRes = await db.query(totalQuery, queryValues);
-
-        // Truy vấn dữ liệu có phân trang
-        queryValues.push(limit);
-        queryValues.push(offset);
-        const categoryRes = await db.query(`${categoryQuery} LIMIT $${i} OFFSET $${i + 1}`, queryValues);
+        const categoryRes = await db.query(`${categoryQuery}`, queryValues);
 
         categories.total = parseInt(totalRes.rows[0].count);
         categories.data = categoryRes.rows;
@@ -66,8 +56,7 @@ const Find = async (param) => {
 
     try {
         const categories = {};
-
-        const query = `SELECT * FROM dm WHERE tenDanhMuc ILIKE $1`; // ILIKE: không phân biệt hoa thường
+        const query = `SELECT * FROM dm WHERE  tenDanhMuc ILIKE $1 AND id != 0`; // ILIKE: không phân biệt hoa thường
         const values = [`%${param}%`]; // thêm wildcard ở đây
 
         const categoryRes = await db.query(query, values);
@@ -114,10 +103,10 @@ const getACategory = async (param)=>{
 const edit = async (params = {}) => {
     const result = {
         success: true,
-        message: ''
+        message: 'Success'
     };
 
-    const { id, tenDanhMuc, moTa, danhMucCha } = params;
+    const { id, name, description, paren, status,  total} = params;
 
     if (!id) {
         result.success = false;
@@ -129,21 +118,29 @@ const edit = async (params = {}) => {
     const values = [];
     let idx = 1;
 
-    if (tenDanhMuc !== undefined) {
+    if (name !== undefined) {
         fields.push(`"tendanhmuc" = $${idx++}`);
-        values.push(tenDanhMuc);
+        values.push(name);
     }
-
-    if (moTa !== undefined) {
+    if (status !== undefined) {
+        fields.push(`"status" = $${idx++}`);
+        values.push(status);
+    }
+    if (description !== undefined) {
         fields.push(`"mota" = $${idx++}`);
-        values.push(moTa);
+        values.push(description);
+    }
+    if (total !== undefined) {
+        fields.push(`"total" = $${idx++}`);
+        values.push(total);
     }
 
-    if (danhMucCha !== undefined) {
+    if (paren !== undefined) {
         fields.push(`"danhmuccha" = $${idx++}`);
-        values.push(danhMucCha);
+        values.push(paren);
     }
-
+    fields.push(`"adddate" = $${idx++}`);
+    values.push(new Date().toISOString());
     if (fields.length === 0) {
         result.success = false;
         result.message = 'Không có dữ liệu nào để cập nhật';
@@ -156,6 +153,9 @@ const edit = async (params = {}) => {
 
     try {
         await db.query(query, values);
+        if (status !== undefined && status === 'inactive') {
+            await db.query("UPDATE sp_dm_relations SET dm_id = 0 WHERE dm_id = $1", [id]);
+        }
     } catch (error) {
         result.success = false;
         result.message = error.message;
@@ -169,9 +169,9 @@ const deleteCategory = async (id) => {
         success: true,
         message: 'Xóa danh mục thành công'
     };
-
     try {
-        await db.query("DELETE FROM dm WHERE id = $1", [id]);
+        await db.query("UPDATE sp_dm_relations SET dm_id = 0 WHERE dm_id = $1", [id]);
+        await db.query("DELETE FROM dm WHERE id = $1 AND id != 0", [id]);
     } catch (error) {
         result.success = false;
         result.message = error.message;
@@ -180,14 +180,20 @@ const deleteCategory = async (id) => {
     }
 };
 
-const addCategory = async (param = {}) => {
-    const result = -1
+const addCategoryModule = async (param = {}) => {
+    const result = {
+        status: true,
+        errMessage: 'Thêm danh mục thành công',
+        data: {}
+    }
     try {
-        result = (await db.query('INSERT INTO dm(tendanhmuc, mota, danhmuccha) VALUES ($1, $2, $3)', [param.name, param.description, param.paren || 0])).rowCount
+        result.data = (await db.query('INSERT INTO dm(tendanhmuc, mota, danhmuccha, status, adddate) VALUES ($1, $2, $3, $4, $5) RETURNING *', [param.tenDanhMuc, param.mota, param.danhmuccha, param.status, new Date().toISOString()])).rows[0];
     } catch (error) {
-        result = 1;
+        console.error("Lỗi thêm danh mục:", error);
+        result.status = false;
+        result.errMessage = error.message;
     }finally {
-        return result
+        return result   
     }
 }
 
@@ -200,7 +206,7 @@ const statistic = async () => {
 
     try {
         // Tổng số danh mục
-        const categoryCount = await db.query("SELECT COUNT(*) AS total FROM dm");
+        const categoryCount = await db.query("SELECT COUNT(*) AS total FROM dm WHERE id != 0");
         result.totalCategory = parseInt(categoryCount.rows[0].total);
 
         // Tổng số sản phẩm
@@ -211,7 +217,9 @@ const statistic = async () => {
         const perCategory = await db.query(`
             SELECT dm.id, dm.tenDanhMuc, COUNT(sp.id) AS totalProduct
             FROM dm
-            LEFT JOIN sp ON sp.dm = dm.id
+            LEFT JOIN sp_dm_relations ON sp_dm_relations.dm_id = dm.id
+            LEFT JOIN sp ON sp.id = sp_dm_relations.sp_id
+            WHERE dm.id != 0
             GROUP BY dm.id, dm.tenDanhMuc
             ORDER BY totalProduct DESC
         `);
@@ -235,10 +243,11 @@ const getPopularCategories = async () => {
         const query = `
             SELECT dm.id, dm.tenDanhMuc, COUNT(sp.id) AS soLuongSanPham
             FROM dm
-            JOIN sp ON sp.danhMucID = dm.id
+            JOIN sp_dm_relations r ON dm.id = r.dm_id
+            JOIN sp ON sp.id = r.sp_id
+            WHERE dm.id != 0
             GROUP BY dm.id
             ORDER BY soLuongSanPham DESC
-            LIMIT 10
         `;
         const res = await db.query(query);
         result.categories = res.rows;
@@ -260,8 +269,8 @@ const getEmptyCategories = async () => {
         const query = `
             SELECT dm.id, dm.tenDanhMuc
             FROM dm
-            LEFT JOIN sp ON sp.danhMucID = dm.id
-            WHERE sp.id IS NULL
+            WHERE dm.total = 0
+            ORDER BY dm.tenDanhMuc ASC
         `;
         const res = await db.query(query);
         result.categories = res.rows;
@@ -286,7 +295,7 @@ export default {
     edit, 
     deleteCategory, 
     backUpCateGory, 
-    addCategory, 
+    addCategoryModule, 
     Find,
     statistic,
     getPopularCategories,

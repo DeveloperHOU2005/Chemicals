@@ -18,10 +18,17 @@ const port = process.env.PORT || 3000;
 
 
 config(app);
+app.use(express.json());
+// 1. Cấu hình CORS chung (nếu bạn muốn áp dụng cho toàn bộ app)
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174'
+];
 app.use(cors({
-    path: '/',
-    methods: 'GET'
-})); 
+    origin: allowedOrigins,                 // frontend của bạn
+    methods: ['GET','POST','PUT','PATCH','DELETE'],
+  }));
+
 
 app.use('/v1/admin/',adminAther, adminRouter)
 app.use('/v1/',userAther, userRouter)

@@ -1,0 +1,1 @@
+// Quản lý trạng thái đăng nhập, lưu token, đăng xuất, kiểm tra quyền.

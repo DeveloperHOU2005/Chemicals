@@ -6,8 +6,7 @@ const router = express.Router();
 // ----------------- Danh mục - Admin CRUD -----------------
 router.get('/', categoryController.getCategory); // Lấy danh sách danh mục
 router.post('/', categoryController.addCategory); // Thêm danh mục
-router.get('/:id', categoryController.edit); // Lấy thông tin 1 danh mục (dùng để chỉnh sửa)
-router.patch('/:id', categoryController.editCategory); // Chỉnh sửa danh mục
+router.patch('/', categoryController.editCategory); // Chỉnh sửa danh mục
 router.delete('/:id', categoryController.deleteCategory); // Xoá danh mục
 
 // ----------------- Tìm kiếm & lọc -----------------

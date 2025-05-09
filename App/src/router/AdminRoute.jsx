@@ -1,0 +1,1 @@
+// component bảo vệ route chỉ dành cho admin

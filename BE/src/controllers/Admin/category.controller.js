@@ -3,12 +3,17 @@ import category from '../../models/Admin/category.module.js'
 
 // danh mục 
 const getCategory = async (req, res)=>{
-    const param = {
-        page : req.query.page, 
-        limit : req.query.limit
-    }
     const list = await category.getAllCategory();
-    
+    list.category.data.forEach(element => {
+        let name = 'không xác định'
+        list.category.data.forEach(e => {
+            if(e.id === element.danhmuccha){
+                name = e.tendanhmuc
+            }
+        });
+        element.idParent = element.danhmuccha
+        element.danhmuccha = name
+    });
     if (!list.status) {
         return res.json({ status: 500, data: list.errMessage });
     }
@@ -19,10 +24,11 @@ const getCategory = async (req, res)=>{
     // Kết quả trả về
     const result = {
         status: 200,
-        category: list.category
+        category: list.category.data,
+        total: list.category.total
     };
     
-    res.json({ data: result });
+    res.json(result);
 }
 
 const edit = async (req, res)=>{
@@ -81,7 +87,7 @@ const deleteCategory = async (req, res) => {
         message: 'Success'
     };
 
-    const id = parseInt(req.query.id) || 0;
+    const id = parseInt(req.params.id) || 0;
 
     if (id === 0) {
         result.status = false;
@@ -103,35 +109,42 @@ const deleteCategory = async (req, res) => {
     return res.status(result.status ? 200 : 500).json({ data: result });
 };
 
-
-const addCategory = async (req, res)=>{
+const addCategory = async (req, res) => {
     const result = {
         status: true, 
-        message: 'Success', 
-        
+        message: 'Success'
     }
     const data = req.body || null
     if(data === null){
         result.status = false
         result.message = 'Dữ liệu không được bỏ trống!'
-        res.status(404).json({data: result})
-    }else{
-        try {
-            const query = category.addCategory(data)
-            if(query !== 0)
-            {
-                result.message = 'Thành công!'            
-            }else{
-                result.message = 'Thất bại!'
-                result.status = false
-            }
-        } catch (error) {
-            result.status = false
-            result.message = 'Lỗi: ' + error.message
-        }finally{
-            res.status((result.status === true ? 200 : 500)).json({data: result})
-        }
+        return res.status(404).json(result)
     }
+    
+    try {
+        // Transform data fields to match your database field names if needed
+        const categoryData = {
+            tenDanhMuc: data.name,
+            mota: data.description,
+            danhmuccha: data.paren || 0,
+            status: data.status || 'active'
+        };
+        
+        const query = await category.addCategoryModule(categoryData)
+        if(query.status) {
+            result.data = query.data
+            result.message = 'Thành công!'            
+        } else {
+            result.message = query.errMessage
+            result.message = 'Thất bại!'
+            result.status = false
+        }
+    } catch (error) {
+        result.status = false
+        result.message = 'Lỗi: ' + error.message
+    }
+    
+    return res.status((result.status === true ? 200 : 500)).json({data: result})
 }
 
 const editCategory = async (req, res) => {
@@ -141,7 +154,6 @@ const editCategory = async (req, res) => {
     };
 
     const data = req.body || null;
-
     if (!data || !data.id) {
         result.status = false;
         result.message = 'Thiếu ID hoặc dữ liệu không được bỏ trống!';
@@ -162,18 +174,26 @@ const editCategory = async (req, res) => {
         // So sánh và tạo param cập nhật
         const updates = { id: data.id };
 
-        if (data.tenDanhMuc !== undefined && data.tenDanhMuc !== oldData.tenDanhMuc) {
-            updates.tenDanhMuc = data.tenDanhMuc;
+        if (data.name !== undefined && data.name !== oldData.tenDanhMuc) {
+            updates.name = data.name;
         }
 
-        if (data.moTa !== undefined && data.moTa !== oldData.moTa) {
-            updates.moTa = data.moTa;
+        if (data.description !== undefined && data.description !== oldData.mota) {
+            updates.description = data.description;
         }
 
-        if (data.danhMucCha !== undefined && data.danhMucCha !== oldData.danhMucCha) {
-            updates.danhMucCha = data.danhMucCha;
+        if (data.paren !== undefined && data.paren !== oldData.danhmuccha) {
+            updates.paren = data.paren;
         }
-
+        
+        if (data.status !== undefined && data.status !== oldData.status) {
+            updates.status = data.status;
+        }
+        
+        if (data.total !== undefined && data.total !== oldData.total) {
+            updates.total = data.total;
+        }
+        
         const editResult = await category.edit(updates);
         result = {
             ...result,
@@ -184,9 +204,8 @@ const editCategory = async (req, res) => {
         result.message = 'Lỗi: ' + error.message;
     }
 
-    return res.status(result.success ? 200 : 500).json({ data: result });
+    return res.status(result.status ? 200 : 500).json({ data: result });
 };
-
 
 const statistics = async (req, res) => {
     const result = {
@@ -214,36 +233,36 @@ const getPopularCategories = async (req, res) => {
 
     try {
         const data = await category.getPopularCategories();
-        result.data = data;
+        result.data = data.categories;
+        result.status = data.status;
+        result.message = data.message || "Thành công";
     } catch (error) {
         result.status = false;
         result.message = "Lỗi: " + error.message;
     }
 
-    return res.status(result.status ? 200 : 500).json({ data: result });
+    return res.status(result.status ? 200 : 500).json(result);
 };
 
 const getEmptyCategories = async (req, res) => {
-    const result = {
+    let result = {
         status: true,
         message: "Thành công"
     };
 
     try {
         const data = await category.getEmptyCategories();
-        result.data = data;
+        result = data;
     } catch (error) {
         result.status = false;
         result.message = "Lỗi: " + error.message;
     }
-
-    return res.status(result.status ? 200 : 500).json({ data: result });
+    return res.status(result.status ? 200 : 500).json({ result });
 };
 
 
 export default {
     getCategory, 
-    edit, 
     find, 
     deleteCategory, 
     addCategory, 

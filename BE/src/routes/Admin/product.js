@@ -10,22 +10,15 @@ router.delete('/delete-product', productController.deleteProduct); // Xóa sản
 
 // ----------------- Admin - Thống kê -----------------
 router.get('/product-statistics', productController.statistics); // Thống kê tổng quan
-router.post('/rate-product', productController.rateProduct); // Đánh giá
-router.get('/product/:id/reviews', productController.getReviews); // Lấy đánh giá
+router.get('/product/:id/reviews', productController.getReviews); // Lấy đánh giá -- chưa làm
 router.get('/stats/top-selling', productController.getTopSellingProducts); // Top bán chạy
 router.get('/stats/low-stock', productController.getLowStockProducts); // Sản phẩm sắp hết
-router.get('/audit/product-history/:id', productController.getProductHistory); // Lịch sử thay đổi
+router.get('/audit/product-history/:id', productController.getProductHistory); // Lịch sử thay đổi -- chưa làm 
 
 // ----------------- User - Mua hàng -----------------
-router.post('/buy-product', productController.buy); // Mua hàng
-router.get('/recommendations', productController.getRecommendations); // ML: Gợi ý sản phẩm
-router.get('/trending', productController.getTrendingProducts); // Sản phẩm nổi bật
-
-// // ----------------- Wishlist -----------------
-// router.get('/wishlist', userController.getWishlist);
-// router.post('/wishlist', userController.addToWishlist);
-// router.delete('/wishlist/:id', userController.removeFromWishlist);
-
+router.get('/recommendations', productController.getRecommendations); // ML: Gợi ý sản phẩm -- chưa làm
+router.get('/trending', productController.getTrendingProducts); // Sản phẩm nổi bật -- chưa làm
+router.post('/rate-product', productController.rateProduct); // Đánh giá -- chưa làm
 // ----------------- Lọc, tìm kiếm -----------------
 router.get('/category/:id/products', productController.getProductsByCategory);
 router.get('/filter', productController.filterProducts);

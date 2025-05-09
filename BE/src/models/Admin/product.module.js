@@ -1,76 +1,40 @@
 import db from '../../utils/db.js';
 
-const getAllProduct = async (params = {}) => {
+const getAllProduct = async () => {
   const result = {
     status: true,
-    category: {},
     product: {}
   };
 
   try {
-    const limit = params.limit || 20;
-    const page = params.page || 1;
-    const offset = (page - 1) * limit;
-
-    // --- Xử lý truy vấn danh mục ---
-    let categoryQuery = "SELECT * FROM dm WHERE 1=1";
-    let totalCategoryQuery = "SELECT COUNT(*) AS total FROM dm WHERE 1=1";
-
-    if (params.categories) {
-      if (params.categories.all) {
-        categoryQuery += ` ${params.categories.all}`;
-      }
-      if (params.categories.total) {
-        totalCategoryQuery += ` ${params.categories.total}`;
-      }
-    }
-
-    // --- Xử lý truy vấn sản phẩm ---
-    let productQuery = "SELECT * FROM sp WHERE 1=1";
-    let totalProductQuery = "SELECT COUNT(*) AS total FROM sp WHERE 1=1";
-    let productImageQuery = "SELECT * FROM sp_hinh WHERE 1=1";
-
-    if (params.product) {
-      if (params.product.name) {
-        productQuery += ` AND ${params.product.name}`;
-      }
-      if (params.product.total) {
-        totalProductQuery += ` AND ${params.product.total}`;
-      }
-      if (params.product.image) {
-        productImageQuery += ` AND ${params.product.image}`;
-      }
-    }
-
-    // Phân trang và sắp xếp sản phẩm
-    productQuery += ` ORDER BY id DESC LIMIT $1 OFFSET $2`;
-
-    // Truy vấn đồng thời
-    const [
-      totalCategoryRes,
-      categoryDataRes,
-      totalProductRes,
-      productDataRes,
-      imageDataRes
-    ] = await Promise.all([
-      db.query(totalCategoryQuery),
-      db.query(categoryQuery),
-      db.query(totalProductQuery),
-      db.query(productQuery, [limit, offset]),
-      db.query(productImageQuery)
-    ]);
-
-    result.category = {
-      total: parseInt(totalCategoryRes.rows[0].total),
-      data: categoryDataRes.rows
-    };
-
-    result.product = {
-      total: parseInt(totalProductRes.rows[0].total),
-      data: productDataRes.rows,
-      image: imageDataRes.rows
-    };
-
+    const query = `
+      SELECT sp.*,  
+        i.total_weight as khoiluong, 
+        i.unit_of_measure as dv,
+        dm.tenDanhMuc as tenDanhMuc, 
+        dm.id as dm_id
+      FROM sp
+      JOIN public.sp_dm_relations r ON sp.id = r.sp_id
+      JOIN public.dm ON r.dm_id = dm.id
+      JOIN public.warehouse_inventory i on sp.id = i.product_id
+      ORDER BY sp.id DESC
+    `;
+    const imageQuery = `
+      SELECT sp_hinh.sp_id, sp_hinh.hinh
+      FROM sp_hinh
+      JOIN sp ON sp_hinh.sp_id = sp.id 
+      ORDER BY sp_hinh.id ASC
+    `;
+    const res = await db.query(query);
+    const imageRes = await db.query(imageQuery);
+    const images = imageRes.rows;
+    const products = res.rows;
+    products.forEach((product) => {
+      const productImages = images.filter((image) => image.sp_id === product.id ? image.hinh : null);
+      product.imageUrl = productImages.map((image) => image.hinh);  
+    })
+    result.product.data = products;
+    result.product.total = res.rowCount;
   } catch (error) {
     result.status = false;
     result.errMessage = error.message;
@@ -89,61 +53,116 @@ const edit = async (params = {}) => {
 };
 
 const getByCategoryId = async (categoryId) => {
-  let result = [];
+  let result = {};
 
   try {
       const query = `
-          SELECT sp.*, sp_hinh.hinh AS imageUrl
+          SELECT sp.*, (
+              SELECT hinh
+              FROM sp_hinh
+              WHERE sp_hinh.sp_id = sp.id
+              ORDER BY id ASC
+              LIMIT 1
+          ) AS imageUrl, i.total_weight as khoiluong, i.unit_of_measure as dv
           FROM sp
-          LEFT JOIN sp_hinh ON sp.id = sp_hinh.sp_id
-          WHERE sp.dm = $1
+          JOIN public.sp_dm_relations r ON sp.id = r.sp_id
+          JOIN public.warehouse_inventory i on sp.id = i.product_id
+          WHERE r.dm_id = $1
+          ORDER BY sp.id DESC
       `;
       const res = await db.query(query, [categoryId]);
-      result = res.rows
+      result.data = res.rows
+      result.total = res.rowCount
   } catch (error) {
       throw new Error("Lỗi truy vấn sản phẩm theo danh mục: " + error.message);
   }
 
   return result;
 };
-const addProduct = async (params)=>{
+const addProduct = async (params) => {
+  // Kiểm tra các trường bắt buộc
+  const requiredFields = ['tensp', 'mota', 'gia', 'dm'];
+  for (const field of requiredFields) {
+    if (params[field] === undefined) {
+      return { 
+        success: false, 
+        errMessage: `Trường ${field} không được để trống` 
+      };
+    }
+  }
+
+  // Thiết lập giá trị mặc định cho các trường không bắt buộc
+  const defaultValues = {
+    khoiluong: 0,
+    trangthai: 'Còn hàng',
+    danhGia: 0,
+    ngayTao: new Date(),
+    ngayCapNhat: new Date(),
+    daBan: 5,
+    image: null
+  };
+
+  // Kết hợp giá trị từ params với giá trị mặc định
+  const finalParams = {
+    ...defaultValues,
+    ...Object.fromEntries(
+      Object.entries(params).filter(([_, value]) => value !== undefined)
+    )
+  };
 
   const query = `
     INSERT INTO sp 
       (tenSP, moTa, khoiLuong, TrangThai, danh_gia, ngay_tao, ngay_cap_nhat, gia, da_ban, dm)
     VALUES 
       ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-    RETURNING id
+    RETURNING *
   `;
-  // Chú ý: chúng ta sắp xếp các trường theo đúng thứ tự trong câu lệnh INSERT
+
+  // Sắp xếp các giá trị theo đúng thứ tự trong câu lệnh INSERT
   const values = [
-    params.tensp,
-    params.mota,
-    params.khoiluong,
-    params.trangthai,
-    params.danhGia,
-    params.ngayTao,
-    params.ngayCapNhat,
-    params.gia,
-    params.daBan,
-    params.dm
+    finalParams.tensp,
+    finalParams.mota,
+    finalParams.khoiluong || defaultValues.khoiluong,
+    finalParams.trangthai || defaultValues.trangthai,
+    finalParams.danhGia || defaultValues.danhGia,
+    finalParams.ngayTao || defaultValues.ngayTao,
+    finalParams.ngayCapNhat || defaultValues.ngayCapNhat,
+    finalParams.gia || defaultValues.daBan,
+    finalParams.daBan,
+    finalParams.dm
   ];
 
   try {
-    const result = (await db.query(query, values)).rows[0];
-    const querys = await db.query(`
-      INSERT INTO sp_hinh 
-      (sp_id, hinh)
-      VALUES 
-      ($1, $2)
-      `,
-      [result.id,params.image]
-    )
+    const result = await db.query(query, values);
+    const productId = result.rows[0].id;
+    
+    // Chỉ chèn hình ảnh nếu có
+    if (finalParams.image !== null) {
+      await db.query(`
+        INSERT INTO sp_hinh 
+        (sp_id, hinh)
+        VALUES 
+        ($1, $2)
+        `,
+        [productId, finalParams.image]
+      );
+     }else{
+      await db.query(`
+        INSERT INTO sp_hinh 
+        (sp_id, hinh)
+        VALUES 
+        ($1, $2)
+        `,
+        [productId, "https://res.cloudinary.com/dmzcks0q6/image/upload/v1744222658/jsxrg5ohx4v4ynq9fw4u.jpg"]
+      );
+    }
+    
     return { success: true, product: result.rows[0] };
   } catch (error) {
     return { success: false, errMessage: error.message };
   }
 }
+
 const editProduct = async (params = {}) => {
   const result = { success: true, message: '' };
 
@@ -230,11 +249,199 @@ const deleteProduct = async (id) => {
   }
 };
 
+const filterProducts = async (params) => {
+  const data = {};
+  const query = [];
+  const param = [];
+  let idx = 0; // Sử dụng let để có thể tăng biến
+
+  // Xử lý từng điều kiện: đảm bảo tham số được chuyển thành mảng nếu cần
+  if (params.tinh_chat_hoa_hoc != undefined) {
+    idx++;
+    query.push(`AND tinh_chat_hoa_hoc = ANY($${idx})`);
+    param.push(Array.isArray(params.tinh_chat_hoa_hoc) ? params.tinh_chat_hoa_hoc : [params.tinh_chat_hoa_hoc]);
+  }
+  if (params.nguon_goc != undefined) {
+    idx++;
+    query.push(`AND nguon_goc = ANY($${idx})`);
+    param.push(Array.isArray(params.nguon_goc) ? params.nguon_goc : [params.nguon_goc]);
+  }
+  if (params.cong_dung != undefined) {
+    idx++;
+    query.push(`AND cong_dung = ANY($${idx})`);
+    param.push(Array.isArray(params.cong_dung) ? params.cong_dung : [params.cong_dung]);
+  }
+  if (params.muc_do_nguy_hiem != undefined) {
+    idx++;
+    query.push(`AND muc_do_nguy_hiem = ANY($${idx})`);
+    param.push(Array.isArray(params.muc_do_nguy_hiem) ? params.muc_do_nguy_hiem : [params.muc_do_nguy_hiem]);
+  }
+  if (params.trang_thai != undefined) {
+    idx++;
+    query.push(`AND trang_thai = ANY($${idx})`);
+    param.push(Array.isArray(params.trang_thai) ? params.trang_thai : [params.trang_thai]);
+  }
+
+  try {
+    // Dùng join(' ') để nối các mệnh đề AND thành chuỗi truy vấn hợp lệ
+    const query2 = `
+      SELECT sp.* FROM sp 
+      LEFT JOIN public.chemical c ON c.spid = sp.id
+      WHERE 1=1 ${query.join(' ')}
+    `;
+    const result = await db.query(query2, param);
+    data.data = result.rows;
+    data.total = result.rowCount;
+    data.success = true;
+  } catch (error) {
+    data.success = false;
+    data.message = error.message;
+  } finally {
+    return data;
+  }
+};
+
+const statistics = async ()=>{
+    const result = {
+      totalProducts: 0,
+      totalSold: 0,
+      revenue: 0,
+      topCategories: [], 
+      topSelling: [],
+      lowStock: [],
+      status: true
+    }
+
+    try {
+      const totalProductsQuery = "SELECT COUNT(*) FROM sp"
+      const totalSoldQuery = "SELECT SUM(da_ban) FROM sp"
+      const revenueQuery = "SELECT SUM(tongtien) FROM orders"
+      const topCategoriesQuery = `
+          SELECT 
+              sp.dm,
+              MAX(dm.tenDanhMuc) AS tenDanhMuc,
+              SUM(sp.da_ban) AS daban
+          FROM sp
+          LEFT JOIN sp_hinh ON sp.id = sp_hinh.sp_id
+          LEFT JOIN dm ON dm.id = sp.dm 
+          GROUP BY sp.dm
+          ORDER BY daban DESC
+          LIMIT 5 OFFSET 0
+          `
+      const topSellingQuery = `
+                  SELECT 
+                    sp.id, 
+                    sp.tensp,
+                    sp.da_ban
+                  FROM sp
+                  LEFT JOIN sp_hinh ON sp.id = sp_hinh.sp_id
+                  ORDER BY sp.da_ban DESC
+                  LIMIT 5 OFFSET 0
+                `
+        const lowStockQuery = `
+                  SELECT 
+                    sp.id, 
+                    sp.tensp,
+                    sp.khoiluong
+                  FROM sp
+                  LEFT JOIN sp_hinh ON sp.id = sp_hinh.sp_id
+                  WHERE sp.khoiluong < 100
+                  ORDER BY sp.khoiluong ASC
+                  LIMIT 5 OFFSET 0
+                `
+        const [
+          totalProducts,
+          totalSold,
+          revenue,
+          topCategories,
+          topSelling,
+          lowStock
+        ] = await Promise.all([
+            db.query(totalProductsQuery),
+            db.query(totalSoldQuery),
+            db.query(revenueQuery),
+            db.query(topCategoriesQuery),
+            db.query(topSellingQuery),
+            db.query(lowStockQuery)
+            ]);
+        result.lowStock = lowStock.rows
+        result.revenue = revenue.rows[0].sum
+        result.topCategories = topCategories.rows
+        result.topSelling = topSelling.rows
+        result.totalProducts = totalProducts.rows[0].count 
+        result.totalSold = totalSold.rows[0].sum
+
+    } catch (error) {
+      result.status = false
+      result.err = error.message
+    }finally{
+      return result
+    }
+}
+const getTopSellingProducts = async ()=>{
+  const result = {
+    topSelling: [],
+    status: true
+  }
+
+  try {
+    const topSellingQuery = `
+                SELECT 
+                  sp.id, 
+                  sp.tensp,
+                  sp.da_ban
+                FROM sp
+                LEFT JOIN sp_hinh ON sp.id = sp_hinh.sp_id
+                ORDER BY sp.da_ban DESC
+              `
+      const topSelling = await  db.query(topSellingQuery)
+      result.topSelling = topSelling.rows
+
+  } catch (error) {
+    result.status = false
+    result.err = error.message
+  }finally{
+    return result
+  }
+}
+const getLowStockProducts = async ()=>{
+  const result = {
+    lowStock: [],
+    status: true
+  }
+
+  try {
+      const lowStockQuery = `
+                SELECT 
+                  sp.id, 
+                  sp.tensp,
+                  sp.khoiluong
+                FROM sp
+                LEFT JOIN sp_hinh ON sp.id = sp_hinh.sp_id
+                WHERE sp.khoiluong < 100
+                ORDER BY sp.khoiluong ASC
+              `
+      const lowStock = await db.query(lowStockQuery)
+      result.lowStock = lowStock.rows
+
+  } catch (error) {
+    result.status = false
+    result.err = error.message
+  }finally{
+    return result
+  }
+}
+
+
 export default { 
   getAllProduct, 
   edit, 
   getByCategoryId,
   addProduct,
   editProduct,
-  deleteProduct
+  deleteProduct,
+  filterProducts,
+  statistics,
+  getTopSellingProducts,
+  getLowStockProducts,
 };

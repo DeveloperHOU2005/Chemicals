@@ -1,0 +1,1 @@
+// component cho các route không cần auth

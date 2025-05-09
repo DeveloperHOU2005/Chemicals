@@ -1,0 +1,1 @@
+// Định nghĩa AuthContext và provider để quản lý trạng thái đăng nhập, token, thông tin user.

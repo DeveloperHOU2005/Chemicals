@@ -81,6 +81,22 @@ CREATE TABLE sp (
     dm INTEGER REFERENCES dm(id) ON DELETE SET NULL ON UPDATE CASCADE
 );
 
+CREATE TABLE chemical (
+    id SERIAL PRIMARY KEY,
+    spid INTEGER,
+    tinh_chat_hoa_hoc VARCHAR(20) NOT NULL, -- 'hữu cơ' hoặc 'vô cơ'
+    nguon_goc          VARCHAR(20) NOT NULL, -- 'tổng hợp' hoặc 'tự nhiên'
+    cong_dung        VARCHAR(20) NOT NULL,   -- 'công nghiệp', 'y tế', 'thí nghiệm', 'nông nghiệp'
+    muc_do_nguy_hiem VARCHAR(20) NOT NULL,   -- 'Độc hại', 'dễ cháy', 'ăn mòn', 'an toàn'
+    trang_thai       VARCHAR(20) NOT NULL,   -- 'rắn', 'lỏng', 'khí'
+    CONSTRAINT fk_sp FOREIGN KEY (spid) REFERENCES sp(id),
+    CONSTRAINT chk_tinh_chat CHECK (tinh_chat_hoa_hoc IN ('hữu cơ', 'vô cơ')),
+    CONSTRAINT chk_nguon_goc CHECK (nguon_goc IN ('tổng hợp', 'tự nhiên')),
+    CONSTRAINT chk_cong_dung CHECK (cong_dung IN ('công nghiệp', 'y tế', 'thí nghiệm', 'nông nghiệp')),
+    CONSTRAINT chk_muc_do_nguy_hiem CHECK (muc_do_nguy_hiem IN ('Độc hại', 'dễ cháy', 'ăn mòn', 'an toàn')),
+    CONSTRAINT chk_trang_thai CHECK (trang_thai IN ('rắn', 'lỏng', 'khí'))
+);
+
 -- Added index for category searches
 CREATE INDEX idx_sp_dm ON sp(dm);
 
@@ -186,3 +202,120 @@ CREATE TABLE hanhDong (
     performed_by INTEGER REFERENCES tk(id) ON DELETE SET NULL ON UPDATE CASCADE,
     performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE reviews (
+    review_id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES public.tk(id) ON DELETE SET NULL,
+    product_id INTEGER REFERENCES sp(id) ON DELETE CASCADE,
+    order_id INTEGER REFERENCES orders(orderid) ON DELETE SET NULL,
+    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    title VARCHAR(255),
+    comment TEXT,
+    is_anonymous BOOLEAN DEFAULT FALSE,
+    seller_service_rating INTEGER CHECK (seller_service_rating BETWEEN 1 AND 5),
+    delivery_speed_rating INTEGER CHECK (delivery_speed_rating BETWEEN 1 AND 5),
+    delivery_person_rating INTEGER CHECK (delivery_person_rating BETWEEN 1 AND 5),
+    verified_purchase BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+-- mục đích: lọc, phân tích
+CREATE TABLE review_tags (
+    tag_id SERIAL PRIMARY KEY,
+    name VARCHAR(50) NOT NULL UNIQUE,
+    description TEXT
+);
+
+CREATE TABLE review_tag_relations (
+    relation_id SERIAL PRIMARY KEY,
+    review_id INTEGER REFERENCES reviews(review_id) ON DELETE CASCADE, -- khi các liên kết bị xóa thì các trường liên quan cũng bị xóa 
+    tag_id INTEGER REFERENCES review_tags(tag_id) ON DELETE CASCADE,
+    UNIQUE(review_id, tag_id)
+);
+
+CREATE TABLE review_media (
+    media_id SERIAL PRIMARY KEY,
+    review_id INTEGER REFERENCES reviews(review_id) ON DELETE CASCADE,
+    media_type VARCHAR(10) NOT NULL, -- 'image' or 'video'
+    url VARCHAR(255) NOT NULL,
+    thumbnail_url VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE reward_points (
+    reward_id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES tk(id) ON DELETE CASCADE,
+    review_id INTEGER REFERENCES reviews(review_id) ON DELETE SET NULL,
+    points INTEGER NOT NULL DEFAULT 0,
+    reason VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE review_votes (
+    vote_id SERIAL PRIMARY KEY,
+    review_id INTEGER REFERENCES reviews(review_id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES tk(id) ON DELETE CASCADE,
+    is_helpful BOOLEAN NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(review_id, user_id)
+);
+
+
+
+-- 1) (Tuỳ chọn) Tạo ENUM type cho trường status
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'product_status') THEN
+    CREATE TYPE product_status AS ENUM (
+      'Còn Hàng',       -- Còn hàng
+      'Hết Hàng',   -- Hết hàng
+      'Chờ Nhập',        -- Chờ nhập
+      'Ngưng kinh Doanh'    -- Ngưng kinh doanh
+    );
+  END IF;
+END$$;
+
+-- 2) Tạo bảng warehouse_inventory
+CREATE TABLE public.warehouse_inventory (
+  id                 BIGSERIAL PRIMARY KEY,
+  product_id         INT         NOT NULL,
+  product_type       VARCHAR(100)   NOT NULL,
+  unit_of_measure    VARCHAR(50)    NOT NULL,       -- e.g. 'kg', 'L'
+  quantity           NUMERIC(18,3)  NOT NULL,       -- số lượng tồn
+  unit_weight        NUMERIC(18,6),                  -- khối lượng trên mỗi đơn vị (nếu cần)
+  total_weight       NUMERIC(18,6)  GENERATED ALWAYS AS (quantity * COALESCE(unit_weight, 1)) STORED,
+  batch_number       VARCHAR(50),                    -- mã lô
+  cas_number         VARCHAR(50),                    -- CAS Registry Number
+  hazard_class       VARCHAR(100),                   -- GHS hazard class
+  storage_temp_range VARCHAR(50),                    -- e.g. '2–8°C'
+  expiry_date        DATE,                           -- hạn sử dụng
+  manufacturer       VARCHAR(255),                   -- nhà sản xuất
+  safety_data_sheet  TEXT,                           -- URL hoặc nội dung SDS
+  shelf_location     VARCHAR(100),                   -- ví dụ 'A2-04'
+  min_stock_level    NUMERIC(18,3),                  -- ngưỡng cảnh báo
+  reorder_point      NUMERIC(18,3),                  -- điểm đặt hàng lại
+  status             product_status NOT NULL DEFAULT 'Còn Hàng',
+  created_at         TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+);
+
+-- 3) Khóa ngoại sang bảng products
+ALTER TABLE public.warehouse_inventory
+  ADD CONSTRAINT fk_inventory_product
+    FOREIGN KEY (product_id)
+    REFERENCES public.sp(id)
+    ON UPDATE CASCADE
+    ON DELETE RESTRICT;
+
+-- 4) Trigger tự động cập nhật updated_at khi bản ghi thay đổi
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_warehouse_inventory_updated
+  BEFORE UPDATE ON public.warehouse_inventory
+  FOR EACH ROW
+  EXECUTE PROCEDURE update_updated_at_column();
